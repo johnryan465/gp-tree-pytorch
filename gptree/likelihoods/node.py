@@ -4,27 +4,25 @@ import gpytorch
 
 class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
     """
-    this method effectively computes the expected log likelihood
-    contribution to Eqn (10) in Reference [1].
+    = 1/2{2(y - 1/2)^T Knm Kmm^-1 - Tr(ΛQnn) - Tr(K^-1mm Kmn Λ Knm K^-1mm Σ) - µ^T K^-1 mm Kmn Λ Knm K^-1 mm µ},
     """
+    # We expect labels {-1, 0, 1} where 0 means ignore
     def expected_log_prob(self, observations, function_dist, *args, **kwargs):
+        # function_dist
+        # \mu = K_nm K_mm^-1 f^hat
+        # \Sigma = K_nn - K_nm K^{-1}mm K_mn
         mean, variance = function_dist.mean, function_dist.variance
-        # Compute the expectation E[f_i^2]
         raw_second_moment = variance + mean.pow(2)
 
-        # Translate targets to be -1, 1
-        observations = observations.to(mean.dtype).mul(2.).sub(1.)
+        mask = observations == 0
 
-        # We detach the following variable since we do not want
-        # to differentiate through the closed-form PG update.
+        target = observations.to(mean.dtype)
+
         c = raw_second_moment.detach().sqrt()
-        # Compute mean of PG auxiliary variable omega: 0.5 * Expectation[omega]
-        # See Eqn (11) and Appendix A2 and A3 in Reference [1] for details.
         half_omega = 0.25 * torch.tanh(0.5 * c) / c
 
-        # Expected log likelihood
-        res = 0.5 * observations * mean - half_omega * raw_second_moment
-        # Sum over data points in mini-batch
+        res = 0.5 * target * mean - half_omega * raw_second_moment
+        res = res * mask.to(res.dtype)
         res = res.sum(dim=-1)
 
         return res
@@ -34,7 +32,7 @@ class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
         return torch.distributions.Bernoulli(logits=function_samples)
 
     # define the marginal likelihood using Gauss Hermite quadrature
-    def marginal(self, function_dist, *args, **kwargs):
+    def marginal(self, function_dist):
         prob_lambda = lambda function_samples: self.forward(function_samples).probs
         probs = self.quadrature(prob_lambda, function_dist)
         return torch.distributions.Bernoulli(probs=probs)

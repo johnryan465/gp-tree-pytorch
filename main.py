@@ -21,7 +21,7 @@ from gpytorch.distributions.multitask_multivariate_normal import MultitaskMultiv
 if __name__ == "__main__":
 
     # this is for running the notebook in our testing framework
-    smoke_test = ('CI' in os.environ)
+    smoke_test = False # ('CI' in os.environ)
 
     N = 100
     X = torch.linspace(-1., 1., N)
@@ -43,12 +43,11 @@ if __name__ == "__main__":
     test_dataset = TensorDataset(test_x, test_y)
     test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False)
 
-    tree = BinaryTree(id=0, left_labels=[0], right_labels=[1], left_node=None, right_node=None)
-    model = GPTree(inducing_points=train_x[:500, :], tree=tree, num_classes=2)
-    likelihood = GPTreeLikelihood(2, tree=tree, likelihoods=[PGLikelihood()])
+    tree = BinaryTree(id=0, left_labels=[0], right_labels=[1], left_node=None, right_node=None, data=None)
+    model = NodeModel(inducing_points=train_x[:500, :]) # GPTree(inducing_points=train_x[:500, :], tree=tree, num_classes=2)
+    likelihood = PGLikelihood()
 
     variational_ngd_optimizer = gpytorch.optim.NGD(model.variational_parameters(), num_data=train_y.size(0), lr=1)
-    variational_ngd_optimizer_2 = gpytorch.optim.NGD(model.inner_variational_parameters(), num_data=train_y.size(0), lr=0.1)
 
     hyperparameter_optimizer = torch.optim.Adam([
         {'params': model.hyperparameters()},
@@ -67,25 +66,20 @@ if __name__ == "__main__":
         for x_batch, y_batch in minibatch_iter:
             # Perform NGD step to optimize variational parameters
             variational_ngd_optimizer.zero_grad()
-            # variational_ngd_optimizer_2.zero_grad()
             hyperparameter_optimizer.zero_grad()
 
             output = model(x_batch)
-            print(output.loc)
+            # print(output.loc)
             loss = -mll(output, y_batch)
             minibatch_iter.set_postfix(loss=loss.item())
             loss.backward()
             variational_ngd_optimizer.step()
-            # variational_ngd_optimizer_2.step()
             hyperparameter_optimizer.step()
 
     model.eval()
     likelihood.eval()
-    means = torch.tensor([0.])
     with torch.no_grad():
-        for x_batch, y_batch in test_loader:
-            preds = model(x_batch)
-            print(preds.mean)
-            means = torch.cat([means, preds.mean.cpu()])
-    means = means[1:]
-    print('Test MAE: {}'.format(torch.mean(torch.abs(means - test_y.cpu()))))
+        nlls = -likelihood.log_marginal(test_y, model(test_x))
+        acc = (likelihood(model(test_x)).probs.gt(0.5) == test_y.bool()).float().mean()
+    print('Test NLL: {:.4f}'.format(nlls.mean()))
+    print('Test Acc: {:.4f}'.format(acc.mean()))
