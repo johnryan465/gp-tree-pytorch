@@ -7,6 +7,7 @@ class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
     = 1/2{2(y - 1/2)^T Knm Kmm^-1 - Tr(ΛQnn) - Tr(K^-1mm Kmn Λ Knm K^-1mm Σ) - µ^T K^-1 mm Kmn Λ Knm K^-1 mm µ},
     """
     # We expect labels {-1, 0, 1} where 0 means ignore
+    # We will integrate the KL divergence between the Polya Gamma variables into the log prob
     def expected_log_prob(self, observations, function_dist, *args, **kwargs):
         # function_dist
         # \mu = K_nm K_mm^-1 f^hat
@@ -15,14 +16,18 @@ class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
         raw_second_moment = variance + mean.pow(2)
 
         mask = observations == 0
+        # print(mask.to(mean.dtype))
 
         target = observations.to(mean.dtype)
-
+        # print(variance)
         c = raw_second_moment.detach().sqrt()
         half_omega = 0.25 * torch.tanh(0.5 * c) / c
 
-        res = 0.5 * target * mean - half_omega * raw_second_moment
+        # print(c)
+        res = (0.5 * target * mean) - (half_omega * raw_second_moment)  + (half_omega * torch.square(c)) - (2*torch.log(torch.exp(c) + 1) - c)
         res = res * mask.to(res.dtype)
+        # print(mean)
+        # print(res)
         res = res.sum(dim=-1)
 
         return res

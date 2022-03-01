@@ -37,7 +37,7 @@ class GPTreeLoss(_ApproximateMarginalLogLikelihood):
         # Get likelihood term and KL term
         num_batch = approximate_dist_f[0].event_shape[0]
         log_likelihood = self._log_likelihood_term(approximate_dist_f, target, **kwargs).div(num_batch)
-        kl_divergence = 0 # self.model.variational_strategy.kl_divergence().div(self.num_data / self.beta)
+        kl_divergence = self.model.kl_divergence().div(self.num_data / self.beta)
 
         # Add any additional registered loss terms
         added_loss = torch.zeros_like(log_likelihood)
@@ -71,16 +71,15 @@ class GPTree(gpytorch.models.GP):
         super().__init__()
         self.feature_dims = inducing_points.size(1)
         self.points_per_class = inducing_points.size(0) // num_classes
-        print(self.points_per_class)
+        # print(self.points_per_class)
         inducing_points = torch.reshape(inducing_points.clone(), (num_classes, self.points_per_class, self.feature_dims))
 
-        self.register_parameter("inducing_points", torch.nn.Parameter(inducing_points, requires_grad=True))
+        self.inducing_points =  torch.nn.Parameter(inducing_points, requires_grad=True)
         self.feature_extractor = feature_extractor
         self.tree = self.initialise_tree(tree)
-        models = list(map(lambda x: x.data, self.tree.sorted_node_list()))
+        models = list(map(lambda x: x.data, self.tree.node_list()))
         self.models = ModuleList(models)
-        print(len(models))
-        self.optimizer = torch.optim.SGD([{"params": self.feature_extractor.parameters()}, {"params": self.inducing_points}], lr=0.1)
+        # print(len(models))
         self.likelihood = GPTreeLikelihood(num_classes,  tree=tree)
 
     def initialise_tree(self, tree: BinaryTree[None]) -> BinaryTree[NodeModel]:
@@ -92,7 +91,14 @@ class GPTree(gpytorch.models.GP):
         start = min(list(tree.left_labels) + list(tree.right_labels))
         end = max(list(tree.left_labels) + list(tree.right_labels))
         model = NodeModel(torch.narrow(self.inducing_points, 0, start, (end-start)+1).view(-1, self.feature_dims).detach())
-        return BinaryTree(tree.id, tree.left_labels, tree.right_labels, left, right, model)
+        return BinaryTree(tree.left_labels, tree.right_labels, left, right, model)
+
+    def kl_divergence(self):
+        res = 0
+        for model in self.models:
+            res += model.variational_strategy.kl_divergence()
+
+        return res
 
     def forward(self, x, **kwargs):
         embed = self.feature_extractor(x)

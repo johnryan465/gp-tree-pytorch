@@ -15,7 +15,6 @@ class NodeModel(gpytorch.models.ApproximateGP):
         self.likelihood = PGLikelihood()
         self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-        self.optimizer = gpytorch.optim.NGD(self.variational_parameters(), num_data=64, lr=1)
 
     def forward(self, x):
         mean_x = self.mean_module(x)
