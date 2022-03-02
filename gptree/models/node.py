@@ -1,6 +1,6 @@
 import gpytorch
 import torch
-from tree.utils import BinaryTree
+from gptree.tree.utils import BinaryTree
 from gptree.likelihoods.node import PGLikelihood
 from gptree.variational.tree_strategy import SharableLocationVariationalStrategy
 

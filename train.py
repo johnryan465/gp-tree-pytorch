@@ -1,13 +1,13 @@
 from typing import List, Tuple
-from models.node import NodeModel
-from models.tree import GPTree, GPTreeLoss
+from gptree.models.node import NodeModel
+from gptree.models.tree import GPTree, GPTreeLoss
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import gpytorch
 import torchvision
-from tree.utils import BinaryTree
+from gptree.tree.utils import BinaryTree
 from tqdm import tqdm
 from torch.profiler import profile, record_function, ProfilerActivity
 
