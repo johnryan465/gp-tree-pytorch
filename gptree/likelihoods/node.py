@@ -16,7 +16,7 @@ class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
         raw_second_moment = variance + mean.pow(2)
 
         mask = observations == 0
-        # print(mask.to(mean.dtype))
+        # print(observations)
 
         target = observations.to(mean.dtype)
         # print(variance)
@@ -24,9 +24,8 @@ class PGLikelihood(gpytorch.likelihoods._OneDimensionalLikelihood):
         half_omega = 0.25 * torch.tanh(0.5 * c) / c
 
         # print(c)
-        res = (0.5 * target * mean) - (half_omega * raw_second_moment)  + (half_omega * torch.square(c)) - (2*torch.log(torch.exp(c) + 1) - c)
+        res = (0.5 * target * mean) - (half_omega * raw_second_moment)
         res = res * mask.to(res.dtype)
-        # print(mean)
         # print(res)
         res = res.sum(dim=-1)
 

@@ -9,5 +9,4 @@ class SharableLocationVariationalStrategy(VariationalStrategy):
     """
     def __init__(self, model, inducing_points, variational_distribution):
         super().__init__(model, inducing_points, variational_distribution, False)
-        del self._buffers["inducing_points"]
-        self.inducing_points = inducing_points
+        self._buffers["inducing_points"] = inducing_points

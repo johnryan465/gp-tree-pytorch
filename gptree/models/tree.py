@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple
 import gpytorch
 from likelihoods.tree import GPTreeLikelihood
 from gpytorch.distributions import Distribution
@@ -6,12 +6,37 @@ import torch
 from torch.nn import ModuleList
 
 from gpytorch.likelihoods import LikelihoodList
+from gpytorch.lazy import BlockDiagLazyTensor, BlockInterleavedLazyTensor, CatLazyTensor, LazyTensor, lazify
 from gptree.models.node import NodeModel
 from gpytorch.distributions.multitask_multivariate_normal import MultitaskMultivariateNormal
+from gpytorch.distributions.multivariate_normal import MultivariateNormal
 from gpytorch.mlls._approximate_mll import _ApproximateMarginalLogLikelihood
 
 from gptree.tree.utils import BinaryTree
 
+
+class IterableMVN(MultitaskMultivariateNormal):
+    def __init__(self, mvns: List[MultivariateNormal]):
+        self.mvns = mvns
+
+        if len(mvns) < 2:
+            raise ValueError("Must provide at least 2 MVNs to form a MultitaskMultivariateNormal")
+        if any(isinstance(mvn, MultitaskMultivariateNormal) for mvn in mvns):
+            raise ValueError("Cannot accept MultitaskMultivariateNormals")
+        if not all(m.batch_shape == mvns[0].batch_shape for m in mvns[1:]):
+            raise ValueError("All MultivariateNormals must have the same batch shape")
+        if not all(m.event_shape == mvns[0].event_shape for m in mvns[1:]):
+            raise ValueError("All MultivariateNormals must have the same event shape")
+        mean = torch.stack([mvn.mean for mvn in mvns], -1)
+
+        covar_blocks_lazy = CatLazyTensor(
+            *[mvn.lazy_covariance_matrix.unsqueeze(0) for mvn in mvns], dim=0, output_device=mean.device
+        )
+        covar_lazy = BlockDiagLazyTensor(covar_blocks_lazy, block_dim=0)
+        super().__init__(mean=mean, covariance_matrix=covar_lazy, interleaved=False)        
+
+    def __iter__(self):
+        return iter(self.mvns)
 
 
 class GPTreeLoss(_ApproximateMarginalLogLikelihood):
@@ -35,7 +60,7 @@ class GPTreeLoss(_ApproximateMarginalLogLikelihood):
                 Additional arguments passed to the likelihood's `expected_log_prob` function.
         """
         # Get likelihood term and KL term
-        num_batch = approximate_dist_f[0].event_shape[0]
+        num_batch = approximate_dist_f.event_shape[0]
         log_likelihood = self._log_likelihood_term(approximate_dist_f, target, **kwargs).div(num_batch)
         kl_divergence = self.model.kl_divergence().div(self.num_data / self.beta)
 
@@ -71,15 +96,13 @@ class GPTree(gpytorch.models.GP):
         super().__init__()
         self.feature_dims = inducing_points.size(1)
         self.points_per_class = inducing_points.size(0) // num_classes
-        # print(self.points_per_class)
-        inducing_points = torch.reshape(inducing_points.clone(), (num_classes, self.points_per_class, self.feature_dims))
+        inducing_points_ = torch.reshape(inducing_points.clone(), (num_classes, self.points_per_class, self.feature_dims))
 
-        self.inducing_points =  torch.nn.Parameter(inducing_points, requires_grad=True)
+        self.inducing_points =  torch.nn.Parameter(inducing_points_, requires_grad=True)
         self.feature_extractor = feature_extractor
         self.tree = self.initialise_tree(tree)
         models = list(map(lambda x: x.data, self.tree.node_list()))
         self.models = ModuleList(models)
-        # print(len(models))
         self.likelihood = GPTreeLikelihood(num_classes,  tree=tree)
 
     def initialise_tree(self, tree: BinaryTree[None]) -> BinaryTree[NodeModel]:
@@ -90,7 +113,7 @@ class GPTree(gpytorch.models.GP):
         right = self.initialise_tree(tree.right_node) if tree.right_node is not None else None
         start = min(list(tree.left_labels) + list(tree.right_labels))
         end = max(list(tree.left_labels) + list(tree.right_labels))
-        model = NodeModel(torch.narrow(self.inducing_points, 0, start, (end-start)+1).view(-1, self.feature_dims).detach())
+        model = NodeModel(torch.narrow(self.inducing_points, 0, start, (end-start)+1).view(-1, self.feature_dims))
         return BinaryTree(tree.left_labels, tree.right_labels, left, right, model)
 
     def kl_divergence(self):
@@ -102,5 +125,5 @@ class GPTree(gpytorch.models.GP):
 
     def forward(self, x, **kwargs):
         embed = self.feature_extractor(x)
-        results = [model(embed) for model in self.models]
-        return results
+        results = list([model(embed) for model in self.models])
+        return IterableMVN(results)
